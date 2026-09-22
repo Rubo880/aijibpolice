@@ -6,6 +6,7 @@ import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
 import { sendFromUserAccount } from '../lib/tg-user.js';
 import { applyHH } from '../lib/hh.js';
+import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
 
 function allowed(userId) {
   const owner = process.env.TELEGRAM_OWNER_USER_ID;
@@ -105,7 +106,16 @@ export default async function handler(req, res) {
       if (text.startsWith('/start')) {
         await sendBotMessage(
           chat.id,
-          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды: /status`
+          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды:\n/scan — найти новые возможности сейчас\n/status — статистика`
+        );
+      } else if (text.startsWith('/scan')) {
+        await sendBotMessage(chat.id, '🔎 Запускаю поиск в Telegram-каналах и HeadHunter…');
+        const tg = await scanTelegramNow();
+        const hh = await scanHHNow();
+        const pushed = await pushNewNow(chat.id);
+        await sendBotMessage(
+          chat.id,
+          `✅ <b>Скан завершён</b>\n\nTelegram: просмотрено ${tg.scanned}, новых ${tg.inserted}, релевантных ${tg.relevant}\nHeadHunter: просмотрено ${hh.scanned}, новых ${hh.inserted}, релевантных ${hh.relevant}\nКарточек отправлено: ${pushed.sent}`
         );
       } else if (text.startsWith('/status')) {
         const s = await getDashboardStats();
