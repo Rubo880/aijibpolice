@@ -101,13 +101,14 @@ export default async function handler(req, res) {
 
     if (u.message) {
       const { chat, from, text = '' } = u.message;
-      if (!allowed(from?.id)) return res.status(200).json({ ok: true });
 
       if (text.startsWith('/start')) {
         await sendBotMessage(
           chat.id,
           `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды:\n/scan — найти новые возможности сейчас\n/status — статистика`
         );
+      } else if (!allowed(from?.id)) {
+        return res.status(200).json({ ok: true });
       } else if (text.startsWith('/scan')) {
         await sendBotMessage(chat.id, '🔎 Запускаю поиск в Telegram-каналах и HeadHunter…');
         const tg = await scanTelegramNow();
