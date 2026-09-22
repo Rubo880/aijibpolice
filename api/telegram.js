@@ -110,13 +110,38 @@ export default async function handler(req, res) {
       } else if (!allowed(from?.id)) {
         return res.status(200).json({ ok: true });
       } else if (text.startsWith('/scan')) {
-        await sendBotMessage(chat.id, '🔎 Запускаю поиск в Telegram-каналах и HeadHunter…');
-        const tg = await scanTelegramNow();
-        const hh = await scanHHNow();
-        const pushed = await pushNewNow(chat.id);
+        await sendBotMessage(chat.id, '🔎 Запускаю поиск. Сначала Telegram, затем HeadHunter.');
+
+        let tg = null;
+        let hh = null;
+        let pushedTg = { sent: 0 };
+        let pushedHh = { sent: 0 };
+
+        try {
+          tg = await scanTelegramNow();
+          pushedTg = await pushNewNow(chat.id, 5);
+          await sendBotMessage(
+            chat.id,
+            `✅ <b>Telegram готов</b>\nПросмотрено: ${tg.scanned}\nРелевантных: ${tg.relevant}\nНовых: ${tg.inserted}\nКарточек: ${pushedTg.sent}\nВремя: ${Math.round(tg.durationMs / 1000)} сек.`
+          );
+        } catch (e) {
+          await sendBotMessage(chat.id, `⚠️ Ошибка Telegram-скана: ${String(e.message).slice(0, 500)}`);
+        }
+
+        try {
+          hh = await scanHHNow();
+          pushedHh = await pushNewNow(chat.id, 5);
+          await sendBotMessage(
+            chat.id,
+            `✅ <b>HeadHunter готов</b>\nПросмотрено: ${hh.scanned}\nРелевантных: ${hh.relevant}\nНовых: ${hh.inserted}\nКарточек: ${pushedHh.sent}\nВремя: ${Math.round(hh.durationMs / 1000)} сек.`
+          );
+        } catch (e) {
+          await sendBotMessage(chat.id, `⚠️ Ошибка HeadHunter-скана: ${String(e.message).slice(0, 500)}`);
+        }
+
         await sendBotMessage(
           chat.id,
-          `✅ <b>Скан завершён</b>\n\nTelegram: просмотрено ${tg.scanned}, новых ${tg.inserted}, релевантных ${tg.relevant}\nHeadHunter: просмотрено ${hh.scanned}, новых ${hh.inserted}, релевантных ${hh.relevant}\nКарточек отправлено: ${pushed.sent}`
+          `🏁 <b>Скан завершён</b>\nВсего карточек отправлено: ${pushedTg.sent + pushedHh.sent}`
         );
       } else if (text.startsWith('/status')) {
         const s = await getDashboardStats();
