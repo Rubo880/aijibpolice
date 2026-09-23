@@ -402,17 +402,44 @@ async function onApply(chatId, opportunityId) {
       );
     }
 
+    const profile = await getProfile();
+    const mode = profile?.settings?.application_mode || 'approve';
+
+    if (mode === 'watch') {
+      return sendBotMessage(
+        chatId,
+        '👀 Режим WATCH: вакансия подходит, но отклик на HH не отправляю.',
+        { reply_markup: mainMenu() }
+      );
+    }
+
+    const app = await createApplication({
+      opportunityId: o.id,
+      channel: 'headhunter',
+      destination: o.source_url,
+      status: 'draft'
+    });
+
+    if (mode !== 'auto') {
+      return sendBotMessage(
+        chatId,
+        `📝 <b>Подтверждение HH-отклика</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nРезюме выбрано. Отклик уйдёт только после кнопки ниже.`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: '📤 Подтвердить отклик на HH', callback_data: `sendhh:${app.id}:${o.id}` }],
+              [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+            ]
+          }
+        }
+      );
+    }
+
     try {
       const result = await applyHH({
         vacancyId: o.external_id,
         resumeId,
         message: ''
-      });
-      const app = await createApplication({
-        opportunityId: o.id,
-        channel: 'headhunter',
-        destination: o.source_url,
-        status: 'sent'
       });
       await markApplicationSent(app.id, result?.id ? String(result.id) : null, 'sent');
       await markOpportunityStatus(o.id, 'applied');
@@ -503,6 +530,30 @@ export default async function handler(req, res) {
         await sendBotMessage(chatId, '⭐ Сохранил в избранное.', { reply_markup: mainMenu() });
       } else if (action === 'apply') {
         await onApply(chatId, a);
+      } else if (action === 'sendhh') {
+        const appId = a;
+        const opportunityId = b;
+        const o = await getOpportunity(opportunityId);
+        if (!o || o.source_kind !== 'headhunter') throw new Error('HH opportunity is missing');
+
+        const hhSettings = await getHHSettings();
+        const resumeId = process.env.HH_RESUME_ID || hhSettings.resumeId;
+        if (!resumeId) {
+          await sendBotMessage(chatId, 'Сначала выбери резюме через /hhstatus.');
+        } else {
+          try {
+            const result = await applyHH({
+              vacancyId: o.external_id,
+              resumeId,
+              message: ''
+            });
+            await markApplicationSent(appId, result?.id ? String(result.id) : null, 'sent');
+            await markOpportunityStatus(o.id, 'applied');
+            await sendBotMessage(chatId, '✅ Отклик на HeadHunter отправлен.', { reply_markup: mainMenu() });
+          } catch (e) {
+            await sendBotMessage(chatId, `⚠️ HH не принял отклик: ${esc(String(e.message).slice(0, 500))}`);
+          }
+        }
       } else if (action === 'sendtg') {
         const appId = a;
         const opportunityId = b;
