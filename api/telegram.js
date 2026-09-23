@@ -13,7 +13,7 @@ import {
   setApplicationMode
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
-import { buildTelegramApplication } from '../lib/application.js';
+import { buildTelegramApplication, buildHHCoverLetter } from '../lib/application.js';
 import { sendFromUserAccount, getUserAccountStatus, sendTestToSavedMessages } from '../lib/tg-user.js';
 
 import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
@@ -340,14 +340,28 @@ async function onApply(chatId, opportunityId) {
   }
 
   if (o.source_kind === 'headhunter') {
+    const built = await buildHHCoverLetter(o);
+    const app = await createApplication({
+      opportunityId: o.id,
+      channel: 'manual',
+      destination: o.source_url,
+      messageText: built.text,
+      status: 'draft'
+    });
+
+    await sendBotMessage(
+      chatId,
+      `💼 <b>Отклик на HeadHunter</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nНиже — персонализированное сопроводительное письмо. Скопируй его в HH перед отправкой отклика.`
+    );
+
     return sendBotMessage(
       chatId,
-      `💼 <b>Отклик на HeadHunter</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nНа HH официальный соискательский API для новых интеграций недоступен, поэтому отклик нужно подтвердить на самом hh.ru. После отправки нажми «Я откликнулся», чтобы я записал это в историю.`,
+      esc(built.text),
       {
         reply_markup: {
           inline_keyboard: [
             ...(o.source_url ? [[{ text: '👀 Открыть вакансию на HH', url: o.source_url }]] : []),
-            [{ text: '✅ Я откликнулся', callback_data: `hhmanual:${o.id}` }],
+            [{ text: '✅ Я откликнулся', callback_data: `hhmanual:${app.id}:${o.id}` }],
             [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
           ]
         }
@@ -425,19 +439,16 @@ export default async function handler(req, res) {
         await answerCallback(q.id, 'Режим изменён');
         await handleMode(chatId);
       } else if (action === 'hhmanual') {
-        const o = await getOpportunity(a);
+        const appId = a;
+        const opportunityId = b;
+        const o = await getOpportunity(opportunityId);
         if (!o || o.source_kind !== 'headhunter') throw new Error('HH opportunity is missing');
-        const app = await createApplication({
-          opportunityId: o.id,
-          channel: 'manual',
-          destination: o.source_url,
-          status: 'sent'
-        });
-        await markApplicationSent(app.id, null, 'manual_hh');
+
+        await markApplicationSent(appId, null, 'manual_hh');
         await markOpportunityStatus(o.id, 'applied');
         await logActivity({
           opportunityId: o.id,
-          applicationId: app.id,
+          applicationId: appId,
           eventType: 'hh_application_marked_manual'
         });
         await sendBotMessage(chatId, '✅ Записал HH-отклик в историю.', { reply_markup: mainMenu() });
