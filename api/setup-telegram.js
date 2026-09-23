@@ -25,6 +25,7 @@ export default async function handler(req, res) {
         { command: 'settings', description: 'Текущие настройки' },
         { command: 'mode', description: 'Режим отклика WATCH / APPROVE / AUTO' },
         { command: 'tgstatus', description: 'Проверить личный Telegram' },
+        { command: 'tgtest', description: 'Тест отправки в Saved Messages' },
         { command: 'help', description: 'Справка по командам' }
       ]
     });
