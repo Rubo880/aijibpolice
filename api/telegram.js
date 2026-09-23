@@ -9,7 +9,8 @@ import {
   getProfile,
   listLatestOpportunities,
   listOpportunitiesByStatus,
-  listApplications
+  listApplications,
+  setApplicationMode
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
@@ -50,6 +51,7 @@ function mainMenu() {
         { text: '📱 Telegram', callback_data: 'menu:tgstatus' }
       ],
       [
+        { text: '🎛 Режим отклика', callback_data: 'menu:mode' },
         { text: '❓ Помощь', callback_data: 'menu:help' }
       ]
     ]
@@ -191,6 +193,35 @@ async function handleSettings(chatId) {
   );
 }
 
+async function handleMode(chatId) {
+  const p = await getProfile();
+  const mode = p?.settings?.application_mode || 'approve';
+  const labels = {
+    watch: 'WATCH — только черновики, без отправки',
+    approve: 'APPROVE — отправка после отдельного подтверждения',
+    auto: 'AUTO — кнопка «Откликнуться» отправляет сразу'
+  };
+
+  await sendBotMessage(
+    chatId,
+    `🎛 <b>Режим отклика</b>\n\nСейчас: <b>${esc(labels[mode] || labels.approve)}</b>\n\nAUTO здесь пока означает отправку сразу после нажатия «🚀 Откликнуться». Полностью автоматическую рассылку по найденным вакансиям отдельно не включаю без твоего решения.`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: mode === 'watch' ? '✅ WATCH' : 'WATCH', callback_data: 'mode:watch' },
+            { text: mode === 'approve' ? '✅ APPROVE' : 'APPROVE', callback_data: 'mode:approve' },
+            { text: mode === 'auto' ? '✅ AUTO' : 'AUTO', callback_data: 'mode:auto' }
+          ],
+          [
+            { text: '⬅️ Меню', callback_data: 'menu:menu' }
+          ]
+        ]
+      }
+    }
+  );
+}
+
 async function handleHelp(chatId) {
   await sendBotMessage(
     chatId,
@@ -203,6 +234,7 @@ async function handleHelp(chatId) {
       '/status — общая статистика\n' +
       '/sources — источники поиска\n' +
       '/settings — текущие настройки\n' +
+      '/mode — режим отклика WATCH / APPROVE / AUTO\n' +
       '/tgstatus — проверить личный Telegram\n' +
       '/help — эта справка',
     { reply_markup: mainMenu() }
@@ -234,14 +266,27 @@ async function onApply(chatId, opportunityId) {
       status: 'draft'
     });
 
-    if (String(process.env.AUTO_SEND_TELEGRAM).toLowerCase() !== 'true') {
+    const profile = await getProfile();
+    const mode = profile?.settings?.application_mode || 'approve';
+
+    if (mode === 'watch') {
       return sendBotMessage(
         chatId,
-        `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nАвтоотправка пока выключена.`,
+        `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nРежим WATCH: отправка из бота отключена.`,
+        { reply_markup: mainMenu() }
+      );
+    }
+
+    if (mode !== 'auto') {
+      return sendBotMessage(
+        chatId,
+        `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nРежим APPROVE: отправлю только после отдельного подтверждения.`,
         {
           reply_markup: {
             inline_keyboard: [[
               { text: '📤 Отправить сейчас', callback_data: `sendtg:${app.id}:${o.id}` }
+            ], [
+              { text: '⬅️ Меню', callback_data: 'menu:menu' }
             ]]
           }
         }
@@ -298,6 +343,7 @@ async function dispatch(chatId, action) {
   if (action === 'status') return handleStatus(chatId);
   if (action === 'sources') return handleSources(chatId);
   if (action === 'settings') return handleSettings(chatId);
+  if (action === 'mode') return handleMode(chatId);
   if (action === 'tgstatus') return handleTgStatus(chatId);
   if (action === 'help') return handleHelp(chatId);
 }
@@ -330,6 +376,7 @@ export default async function handler(req, res) {
           '/status': 'status',
           '/sources': 'sources',
           '/settings': 'settings',
+          '/mode': 'mode',
           '/tgstatus': 'tgstatus',
           '/help': 'help'
         };
@@ -343,10 +390,14 @@ export default async function handler(req, res) {
       const chatId = q.message?.chat?.id;
       const [action, a, b] = String(q.data || '').split(':');
 
-      await answerCallback(q.id, 'Принято');
+      if (action !== 'mode') await answerCallback(q.id, 'Принято');
 
       if (action === 'menu') {
         await dispatch(chatId, a);
+      } else if (action === 'mode') {
+        await setApplicationMode(a);
+        await answerCallback(q.id, 'Режим изменён');
+        await handleMode(chatId);
       } else if (action === 'skip') {
         await markOpportunityStatus(a, 'skipped');
         await sendBotMessage(chatId, '❌ Пропустил.', { reply_markup: mainMenu() });
