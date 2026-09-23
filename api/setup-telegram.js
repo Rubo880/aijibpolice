@@ -22,6 +22,7 @@ export default async function handler(req, res) {
         { command: 'status', description: 'Статистика AI Job Police' },
         { command: 'sources', description: 'Источники поиска' },
         { command: 'settings', description: 'Текущие настройки' },
+        { command: 'mode', description: 'Режим отклика WATCH / APPROVE / AUTO' },
         { command: 'tgstatus', description: 'Проверить личный Telegram' },
         { command: 'help', description: 'Справка по командам' }
       ]
