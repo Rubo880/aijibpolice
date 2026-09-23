@@ -10,14 +10,12 @@ import {
   listLatestOpportunities,
   listOpportunitiesByStatus,
   listApplications,
-  setApplicationMode,
-  getHHSettings,
-  setHHResumeId
+  setApplicationMode
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
 import { sendFromUserAccount, getUserAccountStatus, sendTestToSavedMessages } from '../lib/tg-user.js';
-import { applyHH, getHHMe, getHHResumes } from '../lib/hh.js';
+
 import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
 import { opportunityCard } from '../lib/cards.js';
 
@@ -203,78 +201,27 @@ async function handleSources(chatId) {
 }
 
 async function handleHHStatus(chatId) {
-  if (!process.env.HH_CLIENT_ID || !process.env.HH_CLIENT_SECRET) {
-    return sendBotMessage(
-      chatId,
-      '💼 <b>HeadHunter ещё не настроен</b>\n\nСначала нужно зарегистрировать приложение в кабинете разработчика HH и добавить Client ID / Client Secret в Vercel. После этого здесь появится кнопка подключения.',
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🧩 Открыть кабинет разработчика HH', url: 'https://dev.hh.ru/admin' }],
-            [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
-          ]
-        }
+  return sendBotMessage(
+    chatId,
+    '💼 <b>HeadHunter</b>\n\n✅ Поиск и фильтрация вакансий работают автоматически.\n🚫 Официальный API для соискательских приложений больше не доступен для новых интеграций, поэтому AI Job Police не отправляет отклики через API.\n\nДля HH бот находит и оценивает вакансию, а затем открывает её на hh.ru. После ручного отклика можно отметить его в боте, чтобы история и статистика оставались актуальными.',
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '🔎 Запустить поиск HH', callback_data: 'menu:scan' }],
+          [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+        ]
       }
-    );
-  }
-
-  const settings = await getHHSettings();
-  if (!settings.oauth?.access_token && !process.env.HH_ACCESS_TOKEN) {
-    return sendBotMessage(
-      chatId,
-      '💼 <b>HeadHunter готов к подключению</b>\n\nНажми кнопку ниже, войди в свой HH-аккаунт и разреши доступ AI Job Police.',
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔐 Подключить HeadHunter', url: 'https://aijibpolice.vercel.app/api/hh-connect' }],
-            [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
-          ]
-        }
-      }
-    );
-  }
-
-  try {
-    const [me, resumes] = await Promise.all([getHHMe(), getHHResumes()]);
-    const name = [me?.first_name, me?.last_name].filter(Boolean).join(' ');
-    const current = settings.resumeId;
-    const rows = resumes.slice(0, 8).map((r) => [{
-      text: `${String(r.id) === String(current) ? '✅ ' : ''}${String(r.title || 'Резюме').slice(0, 48)}`,
-      callback_data: `hhresume:${r.id}`
-    }]);
-
-    rows.push([{ text: '⬅️ Меню', callback_data: 'menu:menu' }]);
-
-    return sendBotMessage(
-      chatId,
-      `✅ <b>HeadHunter подключён</b>\nАккаунт: ${esc(name || 'подключён')}\nРезюме: <b>${resumes.length}</b>\n\n${current ? 'Активное резюме отмечено ✅. Нажми другое, чтобы переключить.' : 'Выбери резюме для откликов:'}`,
-      { reply_markup: { inline_keyboard: rows } }
-    );
-  } catch (e) {
-    return sendBotMessage(
-      chatId,
-      `⚠️ Не удалось проверить HeadHunter: ${esc(String(e.message).slice(0, 600))}`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '🔄 Подключить заново', url: 'https://aijibpolice.vercel.app/api/hh-connect' }],
-            [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
-          ]
-        }
-      }
-    );
-  }
+    }
+  );
 }
 
 async function handleSettings(chatId) {
   const p = await getProfile();
   const threshold = Number(process.env.MIN_MATCH_SCORE || p?.minimum_match_score || 65);
   const mode = p?.settings?.application_mode || 'approve';
-  const hhAuto = String(process.env.AUTO_APPLY_HH).toLowerCase() === 'true' || Boolean(p?.auto_apply_hh);
-
   await sendBotMessage(
     chatId,
-    `⚙️ <b>Настройки</b>\n\nМинимальный Match: <b>${threshold}%</b>\nАвтопоиск: <b>включён</b>\nРежим Telegram-отклика: <b>${esc(mode.toUpperCase())}</b>\nHH автоотклик: <b>${hhAuto ? 'включён' : 'выключен'}</b>`,
+    `⚙️ <b>Настройки</b>\n\nМинимальный Match: <b>${threshold}%</b>\nАвтопоиск: <b>включён</b>\nРежим Telegram-отклика: <b>${esc(mode.toUpperCase())}</b>\nHeadHunter: <b>автопоиск + ручной отклик на hh.ru</b>`,
     { reply_markup: mainMenu() }
   );
 }
@@ -320,7 +267,7 @@ async function handleHelp(chatId) {
       '/status — общая статистика\n' +
       '/sources — источники поиска\n' +
       '/settings — текущие настройки\n' +
-      '/hhstatus — подключение HH и выбор резюме\n' +
+      '/hhstatus — статус поиска HeadHunter\n' +
       '/mode — режим отклика WATCH / APPROVE / AUTO\n' +
       '/tgstatus — проверить личный Telegram\n' +
       '/tgtest — тест в Saved Messages\n' +
@@ -393,60 +340,19 @@ async function onApply(chatId, opportunityId) {
   }
 
   if (o.source_kind === 'headhunter') {
-    const hhSettings = await getHHSettings();
-    const resumeId = process.env.HH_RESUME_ID || hhSettings.resumeId;
-    if (!resumeId) {
-      return sendBotMessage(
-        chatId,
-        '💼 Сначала подключи HeadHunter и выбери резюме через /hhstatus.'
-      );
-    }
-
-    const profile = await getProfile();
-    const mode = profile?.settings?.application_mode || 'approve';
-
-    if (mode === 'watch') {
-      return sendBotMessage(
-        chatId,
-        '👀 Режим WATCH: вакансия подходит, но отклик на HH не отправляю.',
-        { reply_markup: mainMenu() }
-      );
-    }
-
-    const app = await createApplication({
-      opportunityId: o.id,
-      channel: 'headhunter',
-      destination: o.source_url,
-      status: 'draft'
-    });
-
-    if (mode !== 'auto') {
-      return sendBotMessage(
-        chatId,
-        `📝 <b>Подтверждение HH-отклика</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nРезюме выбрано. Отклик уйдёт только после кнопки ниже.`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: '📤 Подтвердить отклик на HH', callback_data: `sendhh:${app.id}:${o.id}` }],
-              [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
-            ]
-          }
+    return sendBotMessage(
+      chatId,
+      `💼 <b>Отклик на HeadHunter</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nНа HH официальный соискательский API для новых интеграций недоступен, поэтому отклик нужно подтвердить на самом hh.ru. После отправки нажми «Я откликнулся», чтобы я записал это в историю.`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            ...(o.source_url ? [[{ text: '👀 Открыть вакансию на HH', url: o.source_url }]] : []),
+            [{ text: '✅ Я откликнулся', callback_data: `hhmanual:${o.id}` }],
+            [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+          ]
         }
-      );
-    }
-
-    try {
-      const result = await applyHH({
-        vacancyId: o.external_id,
-        resumeId,
-        message: ''
-      });
-      await markApplicationSent(app.id, result?.id ? String(result.id) : null, 'sent');
-      await markOpportunityStatus(o.id, 'applied');
-      return sendBotMessage(chatId, '✅ Отклик на HeadHunter отправлен.');
-    } catch (e) {
-      return sendBotMessage(chatId, `⚠️ HH не принял отклик: ${esc(String(e.message).slice(0, 500))}`);
-    }
+      }
+    );
   }
 }
 
@@ -510,7 +416,7 @@ export default async function handler(req, res) {
       const chatId = q.message?.chat?.id;
       const [action, a, b] = String(q.data || '').split(':');
 
-      if (!['mode', 'hhresume'].includes(action)) await answerCallback(q.id, 'Принято');
+      if (action !== 'mode') await answerCallback(q.id, 'Принято');
 
       if (action === 'menu') {
         await dispatch(chatId, a);
@@ -518,10 +424,23 @@ export default async function handler(req, res) {
         await setApplicationMode(a);
         await answerCallback(q.id, 'Режим изменён');
         await handleMode(chatId);
-      } else if (action === 'hhresume') {
-        await setHHResumeId(a);
-        await answerCallback(q.id, 'Резюме выбрано');
-        await handleHHStatus(chatId);
+      } else if (action === 'hhmanual') {
+        const o = await getOpportunity(a);
+        if (!o || o.source_kind !== 'headhunter') throw new Error('HH opportunity is missing');
+        const app = await createApplication({
+          opportunityId: o.id,
+          channel: 'manual',
+          destination: o.source_url,
+          status: 'sent'
+        });
+        await markApplicationSent(app.id, null, 'manual_hh');
+        await markOpportunityStatus(o.id, 'applied');
+        await logActivity({
+          opportunityId: o.id,
+          applicationId: app.id,
+          eventType: 'hh_application_marked_manual'
+        });
+        await sendBotMessage(chatId, '✅ Записал HH-отклик в историю.', { reply_markup: mainMenu() });
       } else if (action === 'skip') {
         await markOpportunityStatus(a, 'skipped');
         await sendBotMessage(chatId, '❌ Пропустил.', { reply_markup: mainMenu() });
@@ -530,30 +449,6 @@ export default async function handler(req, res) {
         await sendBotMessage(chatId, '⭐ Сохранил в избранное.', { reply_markup: mainMenu() });
       } else if (action === 'apply') {
         await onApply(chatId, a);
-      } else if (action === 'sendhh') {
-        const appId = a;
-        const opportunityId = b;
-        const o = await getOpportunity(opportunityId);
-        if (!o || o.source_kind !== 'headhunter') throw new Error('HH opportunity is missing');
-
-        const hhSettings = await getHHSettings();
-        const resumeId = process.env.HH_RESUME_ID || hhSettings.resumeId;
-        if (!resumeId) {
-          await sendBotMessage(chatId, 'Сначала выбери резюме через /hhstatus.');
-        } else {
-          try {
-            const result = await applyHH({
-              vacancyId: o.external_id,
-              resumeId,
-              message: ''
-            });
-            await markApplicationSent(appId, result?.id ? String(result.id) : null, 'sent');
-            await markOpportunityStatus(o.id, 'applied');
-            await sendBotMessage(chatId, '✅ Отклик на HeadHunter отправлен.', { reply_markup: mainMenu() });
-          } catch (e) {
-            await sendBotMessage(chatId, `⚠️ HH не принял отклик: ${esc(String(e.message).slice(0, 500))}`);
-          }
-        }
       } else if (action === 'sendtg') {
         const appId = a;
         const opportunityId = b;
