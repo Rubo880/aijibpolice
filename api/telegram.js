@@ -12,7 +12,7 @@ import {
   listApplications,
   setApplicationMode
 } from '../lib/db.js';
-import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
+import { sendBotMessage, answerCallback, deleteBotMessage } from '../lib/telegram-bot.js';
 import { buildTelegramApplication, buildHHCoverLetter } from '../lib/application.js';
 import { sendFromUserAccount, getUserAccountStatus, sendTestToSavedMessages } from '../lib/tg-user.js';
 
@@ -276,7 +276,7 @@ async function handleHelp(chatId) {
   );
 }
 
-async function onApply(chatId, opportunityId) {
+async function onApply(chatId, opportunityId, sourceMessageId = null) {
   const o = await getOpportunity(opportunityId);
   if (!o) return sendBotMessage(chatId, 'Не нашёл эту возможность в базе.');
 
@@ -287,9 +287,18 @@ async function onApply(chatId, opportunityId) {
 
     const built = await buildTelegramApplication(o);
     if (built.missing.length) {
+      await deleteBotMessage(chatId, sourceMessageId);
       return sendBotMessage(
         chatId,
-        `⚠️ Для этого отклика автор просит: <b>${esc(built.missing.join(', '))}</b>.\nЯ не буду придумывать эти данные.\n\n<b>Черновик:</b>\n${esc(built.text)}`
+        `⚠️ Для этого отклика автор просит: <b>${esc(built.missing.join(', '))}</b>.\nЯ не буду придумывать эти данные.\n\n<b>Черновик:</b>\n${esc(built.text)}`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              ...(o.source_url ? [[{ text: '👀 Открыть исходный пост', url: o.source_url }]] : []),
+              [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+            ]
+          }
+        }
       );
     }
 
@@ -305,24 +314,33 @@ async function onApply(chatId, opportunityId) {
     const mode = profile?.settings?.application_mode || 'approve';
 
     if (mode === 'watch') {
+      await deleteBotMessage(chatId, sourceMessageId);
       return sendBotMessage(
         chatId,
         `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nРежим WATCH: отправка из бота отключена.`,
-        { reply_markup: mainMenu() }
+        {
+          reply_markup: {
+            inline_keyboard: [
+              ...(o.source_url ? [[{ text: '👀 Открыть исходный пост', url: o.source_url }]] : []),
+              [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+            ]
+          }
+        }
       );
     }
 
     if (mode !== 'auto') {
+      await deleteBotMessage(chatId, sourceMessageId);
       return sendBotMessage(
         chatId,
         `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nРежим APPROVE: отправлю только после отдельного подтверждения.`,
         {
           reply_markup: {
-            inline_keyboard: [[
-              { text: '📤 Отправить сейчас', callback_data: `sendtg:${app.id}:${o.id}` }
-            ], [
-              { text: '⬅️ Меню', callback_data: 'menu:menu' }
-            ]]
+            inline_keyboard: [
+              [{ text: '📤 Отправить сейчас', callback_data: `sendtg:${app.id}:${o.id}` }],
+              ...(o.source_url ? [[{ text: '👀 Открыть исходный пост', url: o.source_url }]] : []),
+              [{ text: '⬅️ Меню', callback_data: 'menu:menu' }]
+            ]
           }
         }
       );
@@ -336,7 +354,8 @@ async function onApply(chatId, opportunityId) {
       applicationId: app.id,
       eventType: 'telegram_application_sent'
     });
-    return sendBotMessage(chatId, `✅ Отклик отправлен ${esc(o.contact_username)}`);
+    await deleteBotMessage(chatId, sourceMessageId);
+    return null;
   }
 
   if (o.source_kind === 'headhunter') {
@@ -349,14 +368,11 @@ async function onApply(chatId, opportunityId) {
       status: 'draft'
     });
 
-    await sendBotMessage(
-      chatId,
-      `💼 <b>Отклик на HeadHunter</b>\n\n<b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\nНиже — персонализированное сопроводительное письмо. Скопируй его в HH перед отправкой отклика.`
-    );
+    await deleteBotMessage(chatId, sourceMessageId);
 
     return sendBotMessage(
       chatId,
-      esc(built.text),
+      `💼 <b>${esc(o.title || 'Вакансия')}</b>${o.company ? `\n${esc(o.company)}` : ''}\n\n<b>Сопроводительное письмо:</b>\n\n${esc(built.text)}`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -430,7 +446,15 @@ export default async function handler(req, res) {
       const chatId = q.message?.chat?.id;
       const [action, a, b] = String(q.data || '').split(':');
 
-      if (action !== 'mode') await answerCallback(q.id, 'Принято');
+      const callbackText = {
+        skip: 'Пропущено',
+        save: 'Сохранено в избранное',
+        hhmanual: 'Отклик записан в историю',
+        sendtg: 'Отправляю…',
+        apply: 'Готовлю…',
+        menu: 'Открываю…'
+      }[action] || 'Принято';
+      if (action !== 'mode') await answerCallback(q.id, callbackText);
 
       if (action === 'menu') {
         await dispatch(chatId, a);
@@ -451,15 +475,15 @@ export default async function handler(req, res) {
           applicationId: appId,
           eventType: 'hh_application_marked_manual'
         });
-        await sendBotMessage(chatId, '✅ Записал HH-отклик в историю.', { reply_markup: mainMenu() });
+        await deleteBotMessage(chatId, q.message?.message_id);
       } else if (action === 'skip') {
         await markOpportunityStatus(a, 'skipped');
-        await sendBotMessage(chatId, '❌ Пропустил.', { reply_markup: mainMenu() });
+        await deleteBotMessage(chatId, q.message?.message_id);
       } else if (action === 'save') {
         await markOpportunityStatus(a, 'saved');
-        await sendBotMessage(chatId, '⭐ Сохранил в избранное.', { reply_markup: mainMenu() });
+        await deleteBotMessage(chatId, q.message?.message_id);
       } else if (action === 'apply') {
-        await onApply(chatId, a);
+        await onApply(chatId, a, q.message?.message_id);
       } else if (action === 'sendtg') {
         const appId = a;
         const opportunityId = b;
@@ -473,7 +497,12 @@ export default async function handler(req, res) {
           const sent = await sendFromUserAccount(o.contact_username, built.text);
           await markApplicationSent(appId, sent.id, 'sent');
           await markOpportunityStatus(o.id, 'applied');
-          await sendBotMessage(chatId, `✅ Отправлено ${esc(o.contact_username)}`, { reply_markup: mainMenu() });
+          await logActivity({
+            opportunityId: o.id,
+            applicationId: appId,
+            eventType: 'telegram_application_sent'
+          });
+          await deleteBotMessage(chatId, q.message?.message_id);
         }
       }
     }
