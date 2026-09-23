@@ -105,7 +105,7 @@ async function handleScan(chatId) {
     pushedHh = await pushNewNow(chatId, 5);
     await sendBotMessage(
       chatId,
-      `✅ <b>HeadHunter готов</b>\nПросмотрено: ${hh.scanned}\nРелевантных: ${hh.relevant}\nНовых: ${hh.inserted}\nКарточек: ${pushedHh.sent}\nВремя: ${Math.round(hh.durationMs / 1000)} сек.`
+      `✅ <b>HeadHunter готов</b>\nИсточник: <b>${hh.source === 'rss' ? 'HH RSS' : esc(hh.source || 'HH')}</b>\nПросмотрено: ${hh.scanned}\nРелевантных: ${hh.relevant}\nНовых: ${hh.inserted}\nКарточек: ${pushedHh.sent}\nОшибок ленты: ${hh.errors?.length || 0}\nВремя: ${Math.round(hh.durationMs / 1000)} сек.`
     );
   } catch (e) {
     await sendBotMessage(chatId, `⚠️ Ошибка HeadHunter-скана: ${esc(String(e.message).slice(0, 500))}`);
