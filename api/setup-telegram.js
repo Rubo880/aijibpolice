@@ -14,18 +14,33 @@ export default async function handler(req, res) {
 
     const commands = await botCall('setMyCommands', {
       commands: [
-        { command: 'start', description: 'Запустить AI Job Police' },
+        { command: 'menu', description: 'Открыть главное меню' },
         { command: 'scan', description: 'Найти новые вакансии и проекты' },
-        { command: 'status', description: 'Показать статистику' },
-        { command: 'tgstatus', description: 'Проверить личный Telegram' }
+        { command: 'latest', description: 'Показать последние находки' },
+        { command: 'saved', description: 'Показать избранное' },
+        { command: 'applied', description: 'История откликов' },
+        { command: 'status', description: 'Статистика AI Job Police' },
+        { command: 'sources', description: 'Источники поиска' },
+        { command: 'settings', description: 'Текущие настройки' },
+        { command: 'tgstatus', description: 'Проверить личный Telegram' },
+        { command: 'help', description: 'Справка по командам' }
       ]
     });
+
+    const menuButton = await botCall('setChatMenuButton', {
+      menu_button: { type: 'commands' }
+    });
+
+    const info = await botCall('getWebhookInfo');
 
     res.status(200).json({
       ok: true,
       webhookUrl,
       webhook,
-      commands
+      commands,
+      menuButton,
+      pending_update_count: info.pending_update_count,
+      last_error_message: info.last_error_message || null
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
