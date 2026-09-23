@@ -183,12 +183,12 @@ async function handleSources(chatId) {
 async function handleSettings(chatId) {
   const p = await getProfile();
   const threshold = Number(process.env.MIN_MATCH_SCORE || p?.minimum_match_score || 65);
-  const tgAuto = String(process.env.AUTO_SEND_TELEGRAM).toLowerCase() === 'true' || Boolean(p?.auto_send_telegram);
+  const mode = p?.settings?.application_mode || 'approve';
   const hhAuto = String(process.env.AUTO_APPLY_HH).toLowerCase() === 'true' || Boolean(p?.auto_apply_hh);
 
   await sendBotMessage(
     chatId,
-    `⚙️ <b>Настройки</b>\n\nМинимальный Match: <b>${threshold}%</b>\nАвтопоиск: <b>включён</b>\nTelegram автоотправка: <b>${tgAuto ? 'включена' : 'выключена'}</b>\nHH автоотклик: <b>${hhAuto ? 'включён' : 'выключен'}</b>\n\nПока безопасный режим: отклики не должны уходить без подтверждения, если автоотправка выключена.`,
+    `⚙️ <b>Настройки</b>\n\nМинимальный Match: <b>${threshold}%</b>\nАвтопоиск: <b>включён</b>\nРежим Telegram-отклика: <b>${esc(mode.toUpperCase())}</b>\nHH автоотклик: <b>${hhAuto ? 'включён' : 'выключен'}</b>`,
     { reply_markup: mainMenu() }
   );
 }
