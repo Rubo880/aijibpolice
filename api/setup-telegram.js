@@ -14,6 +14,7 @@ export default async function handler(req, res) {
 
     const commands = await botCall('setMyCommands', {
       commands: [
+        { command: 'start', description: 'Запустить AI Job Police' },
         { command: 'menu', description: 'Открыть главное меню' },
         { command: 'scan', description: 'Найти новые вакансии и проекты' },
         { command: 'latest', description: 'Показать последние находки' },
