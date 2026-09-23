@@ -4,7 +4,7 @@ import {
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
-import { sendFromUserAccount } from '../lib/tg-user.js';
+import { sendFromUserAccount, getUserAccountStatus } from '../lib/tg-user.js';
 import { applyHH } from '../lib/hh.js';
 import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
 
@@ -105,7 +105,7 @@ export default async function handler(req, res) {
       if (text.startsWith('/start')) {
         await sendBotMessage(
           chat.id,
-          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды:\n/scan — найти новые возможности сейчас\n/status — статистика`
+          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды:\n/scan — найти новые возможности сейчас\n/status — статистика\n/tgstatus — проверить личный Telegram`
         );
       } else if (!allowed(from?.id)) {
         return res.status(200).json({ ok: true });
@@ -143,6 +143,20 @@ export default async function handler(req, res) {
           chat.id,
           `🏁 <b>Скан завершён</b>\nВсего карточек отправлено: ${pushedTg.sent + pushedHh.sent}`
         );
+      } else if (text.startsWith('/tgstatus')) {
+        try {
+          const tg = await getUserAccountStatus();
+          const name = [tg.firstName, tg.lastName].filter(Boolean).join(' ');
+          await sendBotMessage(
+            chat.id,
+            `✅ <b>Личный Telegram подключён</b>\nАккаунт: ${name || 'без имени'}${tg.username ? ` (@${tg.username})` : ''}\nID: <code>${tg.id}</code>\n\nНикаких сообщений работодателям не отправлялось.`
+          );
+        } catch (e) {
+          await sendBotMessage(
+            chat.id,
+            `⚠️ <b>Личный Telegram не подключился</b>\n${String(e.message).slice(0, 700)}`
+          );
+        }
       } else if (text.startsWith('/status')) {
         const s = await getDashboardStats();
         await sendBotMessage(
