@@ -1,16 +1,212 @@
 import {
-  getOpportunity, markOpportunityStatus, createApplication, markApplicationSent,
-  logActivity, getDashboardStats
+  getOpportunity,
+  markOpportunityStatus,
+  createApplication,
+  markApplicationSent,
+  logActivity,
+  getDashboardStats,
+  getSources,
+  getProfile,
+  listLatestOpportunities,
+  listOpportunitiesByStatus,
+  listApplications
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
 import { sendFromUserAccount, getUserAccountStatus } from '../lib/tg-user.js';
 import { applyHH } from '../lib/hh.js';
 import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
+import { opportunityCard } from '../lib/cards.js';
 
 function allowed(userId) {
   const owner = process.env.TELEGRAM_OWNER_USER_ID;
   return !owner || String(userId) === String(owner);
+}
+
+function esc(s = '') {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function mainMenu() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🔎 Найти сейчас', callback_data: 'menu:scan' },
+        { text: '🆕 Последние', callback_data: 'menu:latest' }
+      ],
+      [
+        { text: '⭐ Избранное', callback_data: 'menu:saved' },
+        { text: '📨 Отклики', callback_data: 'menu:applied' }
+      ],
+      [
+        { text: '📊 Статистика', callback_data: 'menu:status' },
+        { text: '⚙️ Настройки', callback_data: 'menu:settings' }
+      ],
+      [
+        { text: '📡 Источники', callback_data: 'menu:sources' },
+        { text: '📱 Telegram', callback_data: 'menu:tgstatus' }
+      ],
+      [
+        { text: '❓ Помощь', callback_data: 'menu:help' }
+      ]
+    ]
+  };
+}
+
+async function showMenu(chatId) {
+  await sendBotMessage(
+    chatId,
+    '👮 <b>AI Job Police</b>\n\nВыбери действие:',
+    { reply_markup: mainMenu() }
+  );
+}
+
+async function showOpportunityRows(chatId, rows, emptyText) {
+  if (!rows.length) {
+    await sendBotMessage(chatId, emptyText);
+    return;
+  }
+
+  for (const o of rows) {
+    const card = opportunityCard(o);
+    await sendBotMessage(chatId, card.text, { reply_markup: card.reply_markup });
+  }
+}
+
+async function handleScan(chatId) {
+  await sendBotMessage(chatId, '🔎 Запускаю поиск. Сначала Telegram, затем HeadHunter.');
+
+  let tg = null;
+  let hh = null;
+  let pushedTg = { sent: 0 };
+  let pushedHh = { sent: 0 };
+
+  try {
+    tg = await scanTelegramNow();
+    pushedTg = await pushNewNow(chatId, 5);
+    await sendBotMessage(
+      chatId,
+      `✅ <b>Telegram готов</b>\nПросмотрено: ${tg.scanned}\nРелевантных: ${tg.relevant}\nНовых: ${tg.inserted}\nКарточек: ${pushedTg.sent}\nВремя: ${Math.round(tg.durationMs / 1000)} сек.`
+    );
+  } catch (e) {
+    await sendBotMessage(chatId, `⚠️ Ошибка Telegram-скана: ${esc(String(e.message).slice(0, 500))}`);
+  }
+
+  try {
+    hh = await scanHHNow();
+    pushedHh = await pushNewNow(chatId, 5);
+    await sendBotMessage(
+      chatId,
+      `✅ <b>HeadHunter готов</b>\nПросмотрено: ${hh.scanned}\nРелевантных: ${hh.relevant}\nНовых: ${hh.inserted}\nКарточек: ${pushedHh.sent}\nВремя: ${Math.round(hh.durationMs / 1000)} сек.`
+    );
+  } catch (e) {
+    await sendBotMessage(chatId, `⚠️ Ошибка HeadHunter-скана: ${esc(String(e.message).slice(0, 500))}`);
+  }
+
+  await sendBotMessage(
+    chatId,
+    `🏁 <b>Скан завершён</b>\nВсего карточек отправлено: ${pushedTg.sent + pushedHh.sent}`,
+    { reply_markup: mainMenu() }
+  );
+}
+
+async function handleTgStatus(chatId) {
+  try {
+    const tg = await getUserAccountStatus();
+    const name = [tg.firstName, tg.lastName].filter(Boolean).join(' ');
+    await sendBotMessage(
+      chatId,
+      `✅ <b>Личный Telegram подключён</b>\nАккаунт: ${esc(name || 'без имени')}${tg.username ? ` (@${esc(tg.username)})` : ''}\nID: <code>${esc(tg.id)}</code>\n\nНикаких сообщений работодателям не отправлялось.`,
+      { reply_markup: mainMenu() }
+    );
+  } catch (e) {
+    await sendBotMessage(
+      chatId,
+      `⚠️ <b>Личный Telegram не подключился</b>\n${esc(String(e.message).slice(0, 700))}`,
+      { reply_markup: mainMenu() }
+    );
+  }
+}
+
+async function handleStatus(chatId) {
+  const s = await getDashboardStats();
+  await sendBotMessage(
+    chatId,
+    `📊 <b>AI Job Police</b>\n\nЗа 24 часа найдено: <b>${s.found_24h}</b>\nНовых: <b>${s.new_count}</b>\nСильных совпадений: <b>${s.strong_new}</b>\nОткликов за 24ч: <b>${s.applied_24h}</b>\nОткликов всего: <b>${s.applied_total}</b>`,
+    { reply_markup: mainMenu() }
+  );
+}
+
+async function handleLatest(chatId) {
+  const rows = await listLatestOpportunities(5);
+  await showOpportunityRows(chatId, rows, 'Пока подходящих возможностей в базе нет.');
+}
+
+async function handleSaved(chatId) {
+  const rows = await listOpportunitiesByStatus('saved', 10);
+  await showOpportunityRows(chatId, rows, '⭐ В избранном пока ничего нет.');
+}
+
+async function handleApplied(chatId) {
+  const rows = await listApplications(10);
+  if (!rows.length) {
+    await sendBotMessage(chatId, '📨 Откликов пока нет.', { reply_markup: mainMenu() });
+    return;
+  }
+
+  const lines = ['📨 <b>Последние отклики</b>', ''];
+  for (const a of rows) {
+    const title = a.title || a.company || 'Возможность';
+    const when = a.sent_at ? 'отправлен' : 'черновик';
+    lines.push(
+      `• <b>${esc(title)}</b> — ${esc(a.status || when)}${a.source_name ? ` · ${esc(a.source_name)}` : ''}`
+    );
+  }
+
+  await sendBotMessage(chatId, lines.join('\n'), { reply_markup: mainMenu() });
+}
+
+async function handleSources(chatId) {
+  const rows = await getSources();
+  const lines = ['📡 <b>Источники поиска</b>', ''];
+  for (const s of rows) {
+    lines.push(`• ${s.kind === 'headhunter' ? '💼' : '✈️'} ${esc(s.name)} — включён`);
+  }
+  await sendBotMessage(chatId, lines.join('\n'), { reply_markup: mainMenu() });
+}
+
+async function handleSettings(chatId) {
+  const p = await getProfile();
+  const threshold = Number(process.env.MIN_MATCH_SCORE || p?.minimum_match_score || 65);
+  const tgAuto = String(process.env.AUTO_SEND_TELEGRAM).toLowerCase() === 'true' || Boolean(p?.auto_send_telegram);
+  const hhAuto = String(process.env.AUTO_APPLY_HH).toLowerCase() === 'true' || Boolean(p?.auto_apply_hh);
+
+  await sendBotMessage(
+    chatId,
+    `⚙️ <b>Настройки</b>\n\nМинимальный Match: <b>${threshold}%</b>\nАвтопоиск: <b>включён</b>\nTelegram автоотправка: <b>${tgAuto ? 'включена' : 'выключена'}</b>\nHH автоотклик: <b>${hhAuto ? 'включён' : 'выключен'}</b>\n\nПока безопасный режим: отклики не должны уходить без подтверждения, если автоотправка выключена.`,
+    { reply_markup: mainMenu() }
+  );
+}
+
+async function handleHelp(chatId) {
+  await sendBotMessage(
+    chatId,
+    '❓ <b>Команды AI Job Police</b>\n\n' +
+      '/menu — открыть кнопочное меню\n' +
+      '/scan — запустить поиск сейчас\n' +
+      '/latest — последние найденные возможности\n' +
+      '/saved — избранные вакансии/проекты\n' +
+      '/applied — история откликов\n' +
+      '/status — общая статистика\n' +
+      '/sources — источники поиска\n' +
+      '/settings — текущие настройки\n' +
+      '/tgstatus — проверить личный Telegram\n' +
+      '/help — эта справка',
+    { reply_markup: mainMenu() }
+  );
 }
 
 async function onApply(chatId, opportunityId) {
@@ -26,7 +222,7 @@ async function onApply(chatId, opportunityId) {
     if (built.missing.length) {
       return sendBotMessage(
         chatId,
-        `⚠️ Для этого отклика автор просит: <b>${built.missing.join(', ')}</b>.\nЯ не буду придумывать эти данные. Добавим их в профиль, после чего отклик можно будет отправлять автоматически.\n\n<b>Черновик:</b>\n${built.text}`
+        `⚠️ Для этого отклика автор просит: <b>${esc(built.missing.join(', '))}</b>.\nЯ не буду придумывать эти данные.\n\n<b>Черновик:</b>\n${esc(built.text)}`
       );
     }
 
@@ -41,7 +237,7 @@ async function onApply(chatId, opportunityId) {
     if (String(process.env.AUTO_SEND_TELEGRAM).toLowerCase() !== 'true') {
       return sendBotMessage(
         chatId,
-        `📝 <b>Черновик для ${o.contact_username}</b>\n\n${built.text}\n\nАвтоотправка пока выключена.`,
+        `📝 <b>Черновик для ${esc(o.contact_username)}</b>\n\n${esc(built.text)}\n\nАвтоотправка пока выключена.`,
         {
           reply_markup: {
             inline_keyboard: [[
@@ -60,7 +256,7 @@ async function onApply(chatId, opportunityId) {
       applicationId: app.id,
       eventType: 'telegram_application_sent'
     });
-    return sendBotMessage(chatId, `✅ Отклик отправлен ${o.contact_username}`);
+    return sendBotMessage(chatId, `✅ Отклик отправлен ${esc(o.contact_username)}`);
   }
 
   if (o.source_kind === 'headhunter') {
@@ -68,7 +264,7 @@ async function onApply(chatId, opportunityId) {
     if (!process.env.HH_ACCESS_TOKEN || !resumeId) {
       return sendBotMessage(
         chatId,
-        'HH автоотклик ещё не подключён: нужны OAuth-токен и HH_RESUME_ID. Поиск вакансий при этом уже может работать.'
+        'HH автоотклик ещё не подключён: нужны OAuth-токен и HH_RESUME_ID. Поиск вакансий уже работает.'
       );
     }
 
@@ -88,9 +284,22 @@ async function onApply(chatId, opportunityId) {
       await markOpportunityStatus(o.id, 'applied');
       return sendBotMessage(chatId, '✅ Отклик на HeadHunter отправлен.');
     } catch (e) {
-      return sendBotMessage(chatId, `⚠️ HH не принял отклик: ${String(e.message).slice(0, 500)}`);
+      return sendBotMessage(chatId, `⚠️ HH не принял отклик: ${esc(String(e.message).slice(0, 500))}`);
     }
   }
+}
+
+async function dispatch(chatId, action) {
+  if (action === 'menu') return showMenu(chatId);
+  if (action === 'scan') return handleScan(chatId);
+  if (action === 'latest') return handleLatest(chatId);
+  if (action === 'saved') return handleSaved(chatId);
+  if (action === 'applied') return handleApplied(chatId);
+  if (action === 'status') return handleStatus(chatId);
+  if (action === 'sources') return handleSources(chatId);
+  if (action === 'settings') return handleSettings(chatId);
+  if (action === 'tgstatus') return handleTgStatus(chatId);
+  if (action === 'help') return handleHelp(chatId);
 }
 
 export default async function handler(req, res) {
@@ -101,68 +310,30 @@ export default async function handler(req, res) {
 
     if (u.message) {
       const { chat, from, text = '' } = u.message;
+      const command = String(text).trim().split(/\s+/)[0].toLowerCase().split('@')[0];
 
-      if (text.startsWith('/start')) {
+      if (command === '/start') {
         await sendBotMessage(
           chat.id,
-          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>\n\nКоманды:\n/scan — найти новые возможности сейчас\n/status — статистика\n/tgstatus — проверить личный Telegram`
+          `👮 <b>AI Job Police</b>\n\nЯ собираю AI-вакансии, проекты и фриланс-заказы, оцениваю релевантность и помогаю откликаться.\n\nТвой Telegram user ID: <code>${from.id}</code>\nТвой chat ID: <code>${chat.id}</code>`,
+          { reply_markup: mainMenu() }
         );
       } else if (!allowed(from?.id)) {
         return res.status(200).json({ ok: true });
-      } else if (text.startsWith('/scan')) {
-        await sendBotMessage(chat.id, '🔎 Запускаю поиск. Сначала Telegram, затем HeadHunter.');
-
-        let tg = null;
-        let hh = null;
-        let pushedTg = { sent: 0 };
-        let pushedHh = { sent: 0 };
-
-        try {
-          tg = await scanTelegramNow();
-          pushedTg = await pushNewNow(chat.id, 5);
-          await sendBotMessage(
-            chat.id,
-            `✅ <b>Telegram готов</b>\nПросмотрено: ${tg.scanned}\nРелевантных: ${tg.relevant}\nНовых: ${tg.inserted}\nКарточек: ${pushedTg.sent}\nВремя: ${Math.round(tg.durationMs / 1000)} сек.`
-          );
-        } catch (e) {
-          await sendBotMessage(chat.id, `⚠️ Ошибка Telegram-скана: ${String(e.message).slice(0, 500)}`);
-        }
-
-        try {
-          hh = await scanHHNow();
-          pushedHh = await pushNewNow(chat.id, 5);
-          await sendBotMessage(
-            chat.id,
-            `✅ <b>HeadHunter готов</b>\nПросмотрено: ${hh.scanned}\nРелевантных: ${hh.relevant}\nНовых: ${hh.inserted}\nКарточек: ${pushedHh.sent}\nВремя: ${Math.round(hh.durationMs / 1000)} сек.`
-          );
-        } catch (e) {
-          await sendBotMessage(chat.id, `⚠️ Ошибка HeadHunter-скана: ${String(e.message).slice(0, 500)}`);
-        }
-
-        await sendBotMessage(
-          chat.id,
-          `🏁 <b>Скан завершён</b>\nВсего карточек отправлено: ${pushedTg.sent + pushedHh.sent}`
-        );
-      } else if (text.startsWith('/tgstatus')) {
-        try {
-          const tg = await getUserAccountStatus();
-          const name = [tg.firstName, tg.lastName].filter(Boolean).join(' ');
-          await sendBotMessage(
-            chat.id,
-            `✅ <b>Личный Telegram подключён</b>\nАккаунт: ${name || 'без имени'}${tg.username ? ` (@${tg.username})` : ''}\nID: <code>${tg.id}</code>\n\nНикаких сообщений работодателям не отправлялось.`
-          );
-        } catch (e) {
-          await sendBotMessage(
-            chat.id,
-            `⚠️ <b>Личный Telegram не подключился</b>\n${String(e.message).slice(0, 700)}`
-          );
-        }
-      } else if (text.startsWith('/status')) {
-        const s = await getDashboardStats();
-        await sendBotMessage(
-          chat.id,
-          `📊 <b>AI Job Police</b>\nЗа 24 часа найдено: ${s.found_24h}\nНовых: ${s.new_count}\nСильных совпадений: ${s.strong_new}\nОткликов за 24ч: ${s.applied_24h}\nОткликов всего: ${s.applied_total}`
-        );
+      } else {
+        const map = {
+          '/menu': 'menu',
+          '/scan': 'scan',
+          '/latest': 'latest',
+          '/saved': 'saved',
+          '/applied': 'applied',
+          '/status': 'status',
+          '/sources': 'sources',
+          '/settings': 'settings',
+          '/tgstatus': 'tgstatus',
+          '/help': 'help'
+        };
+        if (map[command]) await dispatch(chat.id, map[command]);
       }
     }
 
@@ -174,12 +345,14 @@ export default async function handler(req, res) {
 
       await answerCallback(q.id, 'Принято');
 
-      if (action === 'skip') {
+      if (action === 'menu') {
+        await dispatch(chatId, a);
+      } else if (action === 'skip') {
         await markOpportunityStatus(a, 'skipped');
-        await sendBotMessage(chatId, '❌ Пропустил.');
+        await sendBotMessage(chatId, '❌ Пропустил.', { reply_markup: mainMenu() });
       } else if (action === 'save') {
         await markOpportunityStatus(a, 'saved');
-        await sendBotMessage(chatId, '✅ Сохранил.');
+        await sendBotMessage(chatId, '⭐ Сохранил в избранное.', { reply_markup: mainMenu() });
       } else if (action === 'apply') {
         await onApply(chatId, a);
       } else if (action === 'sendtg') {
@@ -190,13 +363,13 @@ export default async function handler(req, res) {
 
         const built = await buildTelegramApplication(o);
         if (built.missing.length) {
-          return sendBotMessage(chatId, `Нельзя отправить: не заполнены ${built.missing.join(', ')}.`);
+          await sendBotMessage(chatId, `Нельзя отправить: не заполнены ${esc(built.missing.join(', '))}.`);
+        } else {
+          const sent = await sendFromUserAccount(o.contact_username, built.text);
+          await markApplicationSent(appId, sent.id, 'sent');
+          await markOpportunityStatus(o.id, 'applied');
+          await sendBotMessage(chatId, `✅ Отправлено ${esc(o.contact_username)}`, { reply_markup: mainMenu() });
         }
-
-        const sent = await sendFromUserAccount(o.contact_username, built.text);
-        await markApplicationSent(appId, sent.id, 'sent');
-        await markOpportunityStatus(o.id, 'applied');
-        await sendBotMessage(chatId, `✅ Отправлено ${o.contact_username}`);
       }
     }
 
