@@ -14,7 +14,7 @@ import {
 } from '../lib/db.js';
 import { sendBotMessage, answerCallback } from '../lib/telegram-bot.js';
 import { buildTelegramApplication } from '../lib/application.js';
-import { sendFromUserAccount, getUserAccountStatus } from '../lib/tg-user.js';
+import { sendFromUserAccount, getUserAccountStatus, sendTestToSavedMessages } from '../lib/tg-user.js';
 import { applyHH } from '../lib/hh.js';
 import { scanTelegramNow, scanHHNow, pushNewNow } from '../lib/scanners.js';
 import { opportunityCard } from '../lib/cards.js';
@@ -113,6 +113,23 @@ async function handleScan(chatId) {
     `🏁 <b>Скан завершён</b>\nВсего карточек отправлено: ${pushedTg.sent + pushedHh.sent}`,
     { reply_markup: mainMenu() }
   );
+}
+
+async function handleTgTest(chatId) {
+  try {
+    const sent = await sendTestToSavedMessages();
+    await sendBotMessage(
+      chatId,
+      `✅ <b>Тест отправки прошёл</b>\nСообщение отправлено только в твои Saved Messages.\nMessage ID: <code>${esc(sent.id)}</code>`,
+      { reply_markup: mainMenu() }
+    );
+  } catch (e) {
+    await sendBotMessage(
+      chatId,
+      `⚠️ <b>Тест отправки не прошёл</b>\n${esc(String(e.message).slice(0, 700))}`,
+      { reply_markup: mainMenu() }
+    );
+  }
 }
 
 async function handleTgStatus(chatId) {
@@ -236,6 +253,7 @@ async function handleHelp(chatId) {
       '/settings — текущие настройки\n' +
       '/mode — режим отклика WATCH / APPROVE / AUTO\n' +
       '/tgstatus — проверить личный Telegram\n' +
+      '/tgtest — тест в Saved Messages\n' +
       '/help — эта справка',
     { reply_markup: mainMenu() }
   );
@@ -345,6 +363,7 @@ async function dispatch(chatId, action) {
   if (action === 'settings') return handleSettings(chatId);
   if (action === 'mode') return handleMode(chatId);
   if (action === 'tgstatus') return handleTgStatus(chatId);
+  if (action === 'tgtest') return handleTgTest(chatId);
   if (action === 'help') return handleHelp(chatId);
 }
 
@@ -378,6 +397,7 @@ export default async function handler(req, res) {
           '/settings': 'settings',
           '/mode': 'mode',
           '/tgstatus': 'tgstatus',
+          '/tgtest': 'tgtest',
           '/help': 'help'
         };
         if (map[command]) await dispatch(chat.id, map[command]);
