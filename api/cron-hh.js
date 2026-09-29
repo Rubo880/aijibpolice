@@ -18,7 +18,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const hh = await scanHHNow();
+    const hh = await scanHHNow({ searchPeriod: 3 });
     const pushed = await pushNewNow(chatId, 2, 'headhunter');
 
     return res.status(200).json({
